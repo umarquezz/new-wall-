@@ -1,6 +1,6 @@
 -- ╔══════════════════════════════════════════════════╗
 -- ║              W O R L D   Script                  ║
--- ║           Blox Fruits | by umarquezz             ║
+-- ║           Blox Fruits | by mqz                   ║
 -- ║                  v2.0.0                          ║
 -- ╚══════════════════════════════════════════════════╝
 
@@ -56,6 +56,9 @@ local Cfg = {
     AutoFarmFruit   = false,
     -- esp
     ESPEnabled      = false,
+    -- aimbot
+    AimbotEnabled   = false,
+    AimbotFOV       = 100,
     -- misc
     InfiniteJump    = false,
     SpeedBoost      = false,
@@ -857,6 +860,58 @@ local function MakeColorPicker(parent, colorList, onPick)
     return row
 end
 
+local function MakeSlider(parent, icon, label, min, max, default, cb)
+    local row = Instance.new("Frame")
+    row.Size             = UDim2.new(1,0,0,56)
+    row.BackgroundTransparency = 1
+    row.Parent           = parent
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size             = UDim2.new(1,0,0,20)
+    lbl.BackgroundTransparency = 1
+    lbl.Text             = icon.." "..label.." ("..math.floor(default)..")"
+    lbl.TextColor3       = C.text
+    lbl.Font             = Enum.Font.Gotham
+    lbl.TextSize         = 14
+    lbl.TextXAlignment   = Enum.TextXAlignment.Left
+    lbl.Parent           = row
+
+    local track = Instance.new("Frame")
+    track.Size           = UDim2.new(1,0,0,8)
+    track.Position       = UDim2.new(0,0,0,28)
+    track.BackgroundColor3 = C.bg3
+    track.BorderSizePixel  = 0
+    track.Parent         = row
+    Instance.new("UICorner",track).CornerRadius=UDim.new(1,0)
+
+    local knob = Instance.new("Frame")
+    knob.Size            = UDim2.new(0,16,0,16)
+    knob.Position        = UDim2.new((default-min)/(max-min),0,0.5,-8)
+    knob.BackgroundColor3 = C.accent
+    knob.BorderSizePixel = 0
+    knob.Parent          = track
+    Instance.new("UICorner",knob).CornerRadius=UDim.new(1,0)
+
+    local dragging = false
+    knob.InputBegan:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=true end
+    end)
+    knob.InputEnded:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if dragging and i.UserInputType==Enum.UserInputType.MouseMovement then
+            local x = math.clamp(i.Position.X-track.AbsolutePosition.X, 0, track.AbsoluteSize.X)
+            knob.Position = UDim2.new(0, x-8, 0.5, -8)
+            local val = min + (x/track.AbsoluteSize.X)*(max-min)
+            lbl.Text = icon.." "..label.." ("..math.floor(val)..")"
+            if cb then cb(val) end
+        end
+    end)
+
+    return row
+end
+
 -- ────────────────────────────────
 -- ABA 1 — AURA
 -- ────────────────────────────────
@@ -1052,6 +1107,19 @@ do
         Cfg.NoFallDamage = on; SetNoFallDamage(on)
     end)
 
+    -- aimbot section
+    MakeSection(sc, "  🎯  AIMBOT")
+
+    MakeToggle(sc, "🎯", "Aimbot Headshot", false, function(on)
+        Cfg.AimbotEnabled = on
+        Notify("🎯 Aimbot", on and "ativado!" or "desativado.", 2)
+    end)
+
+    -- slider para FOV
+    MakeSlider(sc, "🎯", "FOV", 0, 300, Cfg.AimbotFOV, function(val)
+        Cfg.AimbotFOV = val
+    end)
+
     MakeToggle(sc, "✨", "God Mode (Exp.)", false, function(on)
         Cfg.GodMode = on
         if on then
@@ -1086,6 +1154,91 @@ RunService.Heartbeat:Connect(function()
     if Cfg.GodMode then
         local h=GetHum()
         if h and h.Health<h.MaxHealth then h.Health=h.MaxHealth end
+    end
+end)
+
+-- ────────────────────────────────
+--   AIMBOT LOGIC
+-- ────────────────────────────────
+
+local function GetNearestHead()
+    local closest, minDist = nil, math.huge
+    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    for _,pl in pairs(Players:GetPlayers()) do
+        if pl~=LocalPlayer and pl.Character and pl.Character:FindFirstChild("Head") then
+            local hum = pl.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health>0 then
+                local head = pl.Character.Head
+                local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+                if onScreen then
+                    local pos2 = Vector2.new(screenPos.X, screenPos.Y)
+                    local dist = (pos2 - center).Magnitude
+                    if dist < minDist and dist <= Cfg.AimbotFOV then
+                        minDist = dist
+                        closest = head
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local _aimbotCircle
+RunService.RenderStepped:Connect(function()
+    -- draw FOV circle
+    if Cfg.AimbotEnabled and Drawing then
+        if not _aimbotCircle then
+            _aimbotCircle = Drawing.new("Circle")
+            _aimbotCircle.Thickness = 1
+            _aimbotCircle.Color     = C.accent
+            _aimbotCircle.Transparency = 0.7
+            _aimbotCircle.NumSides  = 64
+            _aimbotCircle.Filled    = false
+        end
+        _aimbotCircle.Position = TracerGetScreenCenter()
+        _aimbotCircle.Radius   = Cfg.AimbotFOV
+        _aimbotCircle.Visible  = true
+    elseif _aimbotCircle then
+        pcall(function() _aimbotCircle:Remove() end)
+        _aimbotCircle = nil
+    end
+
+    if Cfg.AimbotEnabled and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+        local head = GetNearestHead()
+        if head then
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, head.Position)
+        end
+    end
+end)
+
+-- simple auto‑farm routines (mobs, bosses, fruits)
+RunService.Heartbeat:Connect(function()
+    local hrp = GetHRP()
+    if not hrp then return end
+
+    if Cfg.AutoFarmMobs or Cfg.AutoFarmBoss then
+        for _,obj in pairs(Workspace:GetChildren()) do
+            local hum = obj:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health>0 and obj ~= LocalPlayer.Character then
+                local targetPart = obj:FindFirstChild("HumanoidRootPart")
+                if targetPart then
+                    local isBoss = obj.Name:lower():find("boss")
+                    if (Cfg.AutoFarmBoss and isBoss) or (Cfg.AutoFarmMobs and not isBoss) then
+                        hrp.CFrame = targetPart.CFrame + Vector3.new(0,2,0)
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    if Cfg.AutoFarmFruit then
+        for _,thing in pairs(Workspace:GetDescendants()) do
+            if thing:IsA("BasePart") and thing.Name:lower():find("fruit") then
+                thing.CFrame = hrp.CFrame
+            end
+        end
     end
 end)
 
